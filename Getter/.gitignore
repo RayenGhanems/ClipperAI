@@ -1,0 +1,6 @@
+  .env
+  storage/
+  pytest_tmp/
+  .pytest_cache/
+  __pycache__/
+  *.pyc
