@@ -2,90 +2,77 @@ from sqlalchemy.orm import Session
 
 from Data_Ingestion.Synchronisation import SyncService
 from Data_Ingestion.download import DownloadService
-from Data_Ingestion.models import Channel, Video
+from Data_Ingestion.models import Channel
 
 
 class PipelineService:
-
     def __init__(self):
         self.sync_service = SyncService()
         self.download_service = DownloadService()
 
-    def sync_and_download_channel(self, db: Session, channel_url: str):
-        sync_result = self.sync_service.sync_channel(db, channel_url)
+    def ingest_channel(
+        self,
+        db: Session,
+        channel_url: str,
+        max_new_videos: int | None = None,
+    ):
+        # Point d'entrée manuel: lire une chaîne YouTube, enregistrer les vidéos valides,
+        # puis télécharger seulement celles que la synchronisation a sélectionnées.
+        sync_result = self.sync_service.ingest_channel(
+            db,
+            channel_url,
+            max_new_videos=max_new_videos,
+        )
 
-        pending_videos = db.query(Video).filter(
-            Video.download_status == "PENDING"
-        ).all()
-
-        download_result = self.download_service.download_pending_videos(db)
+        download_result = self.download_service.download_videos(
+            db,
+            sync_result["download_video_ids"],
+        )
 
         return {
             "sync_result": sync_result,
-            "pending_videos_before_download": len(pending_videos),
-            "download_result": download_result
+            "download_result": download_result,
         }
 
-    def sync_existing_channels(self, db: Session):
-        channels = db.query(Channel).all()
+    def refresh_channels(self, db: Session, channel_urls: list[str] | None = None):
+        # Chemin utilisé par le scheduler: traiter une liste fournie, ou toutes les chaînes de la base.
+        if channel_urls is None:
+            channels = db.query(Channel).all()
+            channel_urls = [
+                channel.channel_url
+                for channel in channels
+                if channel.channel_url
+            ]
 
         synced_channels = []
-        skipped_channels = []
         failed_channels = []
+        download_video_ids = []
 
-        for channel in channels:
-            channel_data = {
-                "channel_db_id": channel.id,
-                "channel_name": channel.channel_name,
-                "channel_url": channel.channel_url,
-            }
-
-            if not channel.channel_url:
-                skipped_channels.append({
-                    **channel_data,
-                    "reason": "missing_channel_url",
-                })
-                continue
-
+        for channel_url in channel_urls:
             try:
-                sync_result = self.sync_service.sync_channel(
-                    db,
-                    channel.channel_url
-                )
+                sync_result = self.sync_service.refresh_channel(db, channel_url)
 
                 synced_channels.append({
-                    **channel_data,
+                    "channel_url": channel_url,
                     "sync_result": sync_result,
                 })
-
+                download_video_ids.extend(sync_result["download_video_ids"])
             except Exception as e:
-                db.rollback()
                 failed_channels.append({
-                    **channel_data,
+                    "channel_url": channel_url,
                     "error": str(e),
                 })
 
+        download_result = self.download_service.download_videos(
+            db,
+            download_video_ids,
+        )
+
         return {
-            "total_channels": len(channels),
+            "total_channels": len(channel_urls),
             "synced_count": len(synced_channels),
-            "skipped_count": len(skipped_channels),
             "failed_count": len(failed_channels),
             "synced_channels": synced_channels,
-            "skipped_channels": skipped_channels,
             "failed_channels": failed_channels,
-        }
-
-    def sync_and_download_existing_channels(self, db: Session):
-        sync_result = self.sync_existing_channels(db)
-
-        pending_videos_count = db.query(Video).filter(
-            Video.download_status == "PENDING"
-        ).count()
-
-        download_result = self.download_service.download_pending_videos(db)
-
-        return {
-            "sync_result": sync_result,
-            "pending_videos_before_download": pending_videos_count,
             "download_result": download_result,
         }

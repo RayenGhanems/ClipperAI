@@ -6,15 +6,17 @@ from Data_Ingestion.database import SessionLocal
 from Data_Ingestion.pipeline import PipelineService
 
 
-DEFAULT_INTERVAL_SECONDS = 30 * 60
+DEFAULT_INTERVAL_SECONDS = 24 * 60 * 60
+CHANNEL_URLS_ENV_VAR = "SYNC_CHANNEL_URLS"
 
 logger = logging.getLogger(__name__)
 
 
 def get_interval_seconds() -> int:
+    # Par défaut, relancer le scheduler toutes les 24 heures.
     raw_value = os.getenv("SYNC_INTERVAL_SECONDS")
 
-    if raw_value is None:
+    if raw_value is None or raw_value == "":
         return DEFAULT_INTERVAL_SECONDS
 
     interval = int(raw_value)
@@ -25,17 +27,39 @@ def get_interval_seconds() -> int:
     return interval
 
 
-def run_once():
+def get_channel_urls_from_environment() -> list[str] | None:
+    # Permettre une liste d'URLs séparées par des virgules pour cibler certaines chaînes.
+    raw_value = os.getenv(CHANNEL_URLS_ENV_VAR)
+
+    if raw_value is None or raw_value.strip() == "":
+        return None
+
+    channel_urls = [
+        url.strip()
+        for url in raw_value.split(",")
+        if url.strip()
+    ]
+
+    return channel_urls or None
+
+
+def run_once(channel_urls: list[str] | None = None):
+    # Exécuter un cycle complet: ouvrir la session, lancer le pipeline, puis fermer la session.
     db = SessionLocal()
 
     try:
         pipeline = PipelineService()
-        result = pipeline.sync_and_download_existing_channels(db)
+        resolved_channel_urls = (
+            channel_urls if channel_urls is not None
+            else get_channel_urls_from_environment()
+        )
+
+        result = pipeline.refresh_channels(db, resolved_channel_urls)
 
         logger.info(
             "Scheduler run finished: synced=%s failed=%s downloaded=%s",
-            result["sync_result"]["synced_count"],
-            result["sync_result"]["failed_count"],
+            result["synced_count"],
+            result["failed_count"],
             result["download_result"]["downloaded_count"],
         )
 
@@ -45,7 +69,11 @@ def run_once():
         db.close()
 
 
-def run_forever(interval_seconds: int | None = None):
+def run_forever(
+    interval_seconds: int | None = None,
+    channel_urls: list[str] | None = None,
+):
+    # Refaire le même cycle à intervalle régulier.
     if interval_seconds is None:
         interval_seconds = get_interval_seconds()
 
@@ -56,7 +84,7 @@ def run_forever(interval_seconds: int | None = None):
 
     while True:
         try:
-            run_once()
+            run_once(channel_urls=channel_urls)
         except Exception:
             logger.exception("Scheduler run failed")
 

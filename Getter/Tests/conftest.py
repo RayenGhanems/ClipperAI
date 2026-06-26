@@ -1,3 +1,7 @@
+import os
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from sqlalchemy import create_engine
@@ -7,6 +11,14 @@ from Data_Ingestion.database import Base
 
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
+
+
+_local_tmp_root = Path(__file__).resolve().parent.parent / "pytest_tmp"
+_local_tmp_root.mkdir(exist_ok=True)
+os.environ.setdefault("TMP", str(_local_tmp_root))
+os.environ.setdefault("TEMP", str(_local_tmp_root))
+os.environ.setdefault("TMPDIR", str(_local_tmp_root))
+tempfile.tempdir = str(_local_tmp_root)
 
 
 engine = create_engine(

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from Data_Ingestion.database import Base
 
 
@@ -15,6 +15,8 @@ class Channel(Base):
     uploads_playlist_id = Column(String)
     youtube_video_count = Column(Integer, default=0)
     db_video_count = Column(Integer, default=0)
+    # Dernière vidéo valide prise en compte par le pipeline pour cette chaîne.
+    latest_download = Column(DateTime)
     last_sync_at = Column(DateTime)
 
     videos = relationship("Video", back_populates="channel")
@@ -36,7 +38,11 @@ class Video(Base):
     download_status = Column(String, default="PENDING")
     processing_status = Column(String, default="WAITING_DOWNLOAD")
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Stocker un horodatage UTC sans fuseau pour garder les comparaisons simples en base.
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
 
     channel = relationship("Channel", back_populates="videos")
 
